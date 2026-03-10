@@ -1,0 +1,6 @@
+device {{DEVICE}}
+si SWD
+speed {{SPEED_KHZ}}
+connect
+savebin {{OUT_BIN}},{{FB_ADDR}},{{FB_SIZE}}
+exit
