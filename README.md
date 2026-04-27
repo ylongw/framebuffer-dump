@@ -4,9 +4,11 @@ Dump the current STM32 LCD framebuffer via J-Link and convert it to a PNG image 
 
 ## How it works
 
-1. Connects to the target via J-Link (SWD)
-2. Reads raw framebuffer bytes from SDRAM (e.g. `0xD0000000`)
+1. Reads `LTDC_L1CFBAR` over SWD to find which framebuffer the LCD is **currently** scanning out
+2. Dumps that buffer from SDRAM (e.g. `0xD0000000` or `0xD0200000` on PRO2)
 3. Converts the raw binary to PNG using `dump_fb.py`
+
+Step 1 is what makes the screenshot match what's actually on the LCD. With double-buffered LVGL direct mode, a hardcoded address may point to the back buffer (mid-render or stale) — reading L1CFBAR avoids that race.
 
 ## Requirements
 
@@ -15,64 +17,45 @@ Dump the current STM32 LCD framebuffer via J-Link and convert it to a PNG image 
 
 ## Usage
 
-### 1. Create a J-Link command file from the template
-
-Replace placeholders in `scripts/dump_fb.jlink.template`:
-
-| Placeholder | Example |
-|---|---|
-| `{{DEVICE}}` | `STM32H747XI_M7` |
-| `{{SPEED_KHZ}}` | `12000` |
-| `{{OUT_BIN}}` | `/tmp/fb_dump.bin` |
-| `{{FB_ADDR}}` | `0xD0000000` |
-| `{{FB_SIZE}}` | `0x1C5000` |
-
-Example for STM32H747 at 604×1024 RGB888:
-
 ```bash
-sed \
-  -e 's/{{DEVICE}}/STM32H747XI_M7/' \
-  -e 's/{{SPEED_KHZ}}/12000/' \
-  -e 's|{{OUT_BIN}}|/tmp/fb_dump.bin|' \
-  -e 's/{{FB_ADDR}}/0xD0000000/' \
-  -e 's/{{FB_SIZE}}/0x1C5000/' \
-  scripts/dump_fb.jlink.template > /tmp/dump_fb.jlink
+scripts/dump_fb.sh /tmp/fb_dump.bin /tmp/fb_dump.png
 ```
 
-### 2. Dump the framebuffer
+Defaults target STM32H747 PRO2 (604×1024, RGB565). Override via env vars:
+
+| Var | Default | Notes |
+|---|---|---|
+| `DEVICE` | `STM32H747XI_M7` | J-Link device name |
+| `SPEED_KHZ` | `12000` | SWD speed |
+| `WIDTH` | `604` | pixels |
+| `HEIGHT` | `1024` | pixels |
+| `FORMAT` | `rgb565` | `rgb565` or `rgb888` |
+| `L1CFBAR` | `0x500010AC` | LTDC L1 FB-address register |
 
 ```bash
-JLinkExe -NoGui 1 -CommandFile /tmp/dump_fb.jlink > /tmp/jlink_dump_fb.log 2>&1
+# Example: PRO1 (480×800) RGB888
+FORMAT=rgb888 WIDTH=480 HEIGHT=800 scripts/dump_fb.sh /tmp/pro1.bin /tmp/pro1.png
 ```
 
-### 3. Convert raw binary to PNG
+For non-LTDC targets, see `SKILL.md` for the manual `JLinkExe` + template workflow.
 
-```bash
-python3 scripts/dump_fb.py \
-  --in /tmp/fb_dump.bin \
-  --out /tmp/fb_dump.png \
-  --width 604 --height 1024 --stride 3
-```
-
-The output PNG will be at `/tmp/fb_dump.png`.
-
-## Default parameters (STM32H747XI PRO2)
+## Default parameters (STM32H747 PRO2)
 
 | Parameter | Value |
 |---|---|
-| FB base address | `0xD0000000` (SDRAM) |
+| FB candidates | `0xD0000000` (FB_A), `0xD0200000` (FB_B) — wrapper picks via L1CFBAR |
 | Resolution | 604 × 1024 |
-| Pixel format | RGB888 (3 bytes/pixel) |
-| Dump size | `0x1C5000` (1,855,488 bytes) |
+| Pixel format | RGB565 (2 bytes/pixel) |
+| Dump size | `0x12E000` (1,236,992 bytes) |
 
-Adapt these to match your target's display configuration.
+Adapt these to match your target's display configuration via env vars or the manual workflow.
 
 ## Troubleshooting
 
 - **Output .bin is 0 bytes** — check J-Link connection and path permissions
 - **Colors look wrong** — verify pixel format (RGB888 vs BGR888 vs RGB565)
 - **Image shifted or corrupt** — verify width/height match current display mode
-- **Command hangs** — verify dump size matches actual framebuffer size
+- **Overlays clipped / content stale even though device looks fine** — you're reading a back buffer; use `dump_fb.sh` (which auto-selects via L1CFBAR) instead of a hardcoded address
 
 ## OpenClaw skill
 
